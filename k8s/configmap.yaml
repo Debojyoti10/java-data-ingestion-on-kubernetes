@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weather-pipeline-config
+  namespace: weather-pipeline
+data:
+  # Database Configuration (non-sensitive)
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "weather_db"
+  DB_USER: "postgres"
+  DATABASE_URL: "jdbc:postgresql://postgres-service:5432/weather_db"
+  
+  # Spark Configuration
+  SPARK_MASTER: "local[*]"
+  SPARK_APP_NAME: "Weather Data Pipeline on Kubernetes"
+  
+  # Java Runtime Options for Spark compatibility
+  JAVA_OPTS: "--add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.nio.cs=ALL-UNNAMED --add-opens=java.base/sun.security.action=ALL-UNNAMED --add-opens=java.base/sun.util.calendar=ALL-UNNAMED --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"
+  
+  # Weather API Configuration (non-sensitive)
+  WEATHER_API_BASE_URL: "https://api.openweathermap.org/data/2.5"
+  WEATHER_API_UNITS: "metric"
+  WEATHER_API_TIMEOUT: "30000"
+  WEATHER_API_MAX_RETRIES: "3"
+  
+  # Application Configuration
+  APP_CITIES: "London,Delhi,Tokyo,Paris,Sydney,Mumbai,Berlin,Toronto,Singapore,Dubai"
+  APP_FETCH_INTERVAL_SECONDS: "300"
+  APP_MAX_RETRIES: "3"
+  
+  # Logging Configuration
+  LOGGING_LEVEL: "INFO"
+  LOGGING_PATTERN: "%d{yyyy-MM-dd HH:mm:ss} [%level] %logger{36} - %msg%n"
+  
+  # Application Properties File (for additional configuration)
+  application.properties: |
+    # Database Configuration - configured via environment variables
+    # db.url - constructed from DB_HOST, DB_PORT, DB_NAME environment variables
+    # db.username - from DB_USER environment variable  
+    # db.password - from DB_PASSWORD environment variable
+    db.driver=org.postgresql.Driver
+    db.max.connections=10
+    db.connection.timeout=30000
+    
+    # OpenWeatherMap API Configuration
+    weather.api.base.url=https://api.openweathermap.org/data/2.5
+    # weather.api.key - configured via WEATHER_API_KEY environment variable
+    weather.api.units=metric
+    weather.api.timeout=30000
+    weather.api.max.retries=3
+    
+    # Application Configuration
+    app.fetch.interval.seconds=300
+    app.cities=London,Delhi,Tokyo,Paris,Sydney,Mumbai,Berlin,Toronto,Singapore,Dubai
+    app.max.retries=3
+    
+    # Logging Configuration
+    logging.level=INFO
+    logging.pattern=%d{yyyy-MM-dd HH:mm:ss} [%level] %logger{36} - %msg%n

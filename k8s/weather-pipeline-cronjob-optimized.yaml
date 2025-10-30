@@ -1,0 +1,97 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weather-pipeline-spark-cronjob
+  namespace: weather-pipeline
+  labels:
+    app: weather-pipeline
+    type: cronjob
+spec:
+  # Schedule options (choose one):
+  # "*/15 * * * *"     # Every 15 minutes (for testing)
+  # "*/30 * * * *"     # Every 30 minutes (CURRENT - for testing)
+  # "0 */2 * * *"      # Every 2 hours 
+  # "0 */6 * * *"      # Every 6 hours (recommended)
+  # "0 8,14,20 * * *"  # At 8am, 2pm, 8pm daily
+  # "0 9 * * *"        # Once daily at 9am
+  schedule: "*/30 * * * *"  # Every 30 minutes (testing automation)
+  
+  # Job execution settings
+  concurrencyPolicy: Forbid  # Don't run if previous job is still running
+  successfulJobsHistoryLimit: 5  # Keep 5 successful job logs
+  failedJobsHistoryLimit: 3      # Keep 3 failed job logs
+  startingDeadlineSeconds: 300   # Job must start within 5 minutes
+  
+  jobTemplate:
+    spec:
+      backoffLimit: 2  # Retry up to 2 times on failure
+      activeDeadlineSeconds: 600  # Job timeout: 10 minutes
+      
+      template:
+        metadata:
+          labels:
+            app: weather-pipeline
+            component: spark-processor
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: weather-spark-processor
+            # Use your optimized image (change as needed)
+            image: weather-pipeline:optimized-fixed
+            imagePullPolicy: Never  # Use local Minikube image
+            
+            # Run Spark transformations using spark-submit
+            command: ["/bin/sh"]
+            args:
+              - -c
+              - |
+                echo "🚀 Starting scheduled Spark-Submit weather processing at $(date)"
+                /opt/spark/bin/spark-submit \
+                  --class com.pipeline.weather.WeatherPipelineApplication \
+                  --master local[*] \
+                  --driver-memory 2g \
+                  --executor-memory 1g \
+                  --executor-cores 2 \
+                  --conf spark.app.name="WeatherDataPipeline" \
+                  --conf spark.sql.adaptive.enabled=true \
+                  --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+                  --conf spark.sql.adaptive.skewJoin.enabled=true \
+                  --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+                  --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
+                  --conf spark.driver.extraJavaOptions="--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/sun.nio.cs=ALL-UNNAMED --add-opens java.base/sun.security.action=ALL-UNNAMED --add-opens java.base/sun.util.calendar=ALL-UNNAMED" \
+                  --conf spark.executor.extraJavaOptions="--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/sun.nio.cs=ALL-UNNAMED --add-opens java.base/sun.security.action=ALL-UNNAMED --add-opens java.base/sun.util.calendar=ALL-UNNAMED" \
+                  app.jar spark
+                echo "✅ Scheduled Spark-Submit processing completed at $(date)"
+            
+            # Resource limits (adjust based on your system)
+            resources:
+              requests:
+                memory: "1.5Gi"
+                cpu: "500m"
+              limits:
+                memory: "3Gi"
+                cpu: "2000m"
+            
+            # Environment variables for database connection
+            env:
+            - name: DATABASE_URL
+              value: "jdbc:postgresql://postgres-service:5432/weather_db"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: weather-pipeline-secrets
+                  key: DB_PASSWORD
+            - name: WEATHER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: weather-pipeline-secrets
+                  key: WEATHER_API_KEY
+            - name: APP_PROFILE
+              value: "k8s"
+              
+          # Optional: Add node selector for specific nodes
+          # nodeSelector:
+          #   kubernetes.io/os: linux

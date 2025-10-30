@@ -1,0 +1,45 @@
+# Optimized Multi-stage Docker build - Smaller size
+FROM maven:3.8-openjdk-17-slim AS builder
+
+WORKDIR /app
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# Use Spark-enabled base image (saves 300MB+)
+FROM bitnami/spark:3.5.0
+
+# Switch to root for installation
+USER root
+
+# Install only essential packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy application
+COPY --from=builder /app/target/weather-data-pipeline-1.0.0.jar /opt/bitnami/spark/app.jar
+
+# Set environment variables
+ENV JAVA_OPTS="--add-opens=java.base/java.lang=ALL-UNNAMED \
+--add-opens=java.base/java.lang.invoke=ALL-UNNAMED \
+--add-opens=java.base/java.lang.reflect=ALL-UNNAMED \
+--add-opens=java.base/java.io=ALL-UNNAMED \
+--add-opens=java.base/java.net=ALL-UNNAMED \
+--add-opens=java.base/java.nio=ALL-UNNAMED \
+--add-opens=java.base/java.util=ALL-UNNAMED \
+--add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
+--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED \
+--add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+--add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
+--add-opens=java.base/sun.security.action=ALL-UNNAMED \
+--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+
+# Create startup script
+RUN echo '#!/bin/bash\necho "Starting Optimized Weather Pipeline..."\njava $JAVA_OPTS -jar /opt/bitnami/spark/app.jar "$@"' > /start.sh && chmod +x /start.sh
+
+EXPOSE 8080 4040
+ENTRYPOINT ["/start.sh"]
+CMD ["spark"]

@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job  
+metadata:
+  name: weather-pipeline-optimized-spark
+  namespace: weather-pipeline
+  labels:
+    app: weather-pipeline
+    version: optimized
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: weather-pipeline
+        version: optimized
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: weather-pipeline
+        image: weather-pipeline:k8s-optimized
+        imagePullPolicy: Never
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            echo "🚀 Starting Spark-Submit weather processing job"
+            /opt/spark/bin/spark-submit \
+              --class com.pipeline.weather.WeatherPipelineApplication \
+              --master local[*] \
+              --driver-memory 2g \
+              --executor-memory 1g \
+              --executor-cores 2 \
+              --conf spark.app.name="WeatherDataPipeline-Job" \
+              --conf spark.sql.adaptive.enabled=true \
+              --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+              --conf spark.sql.adaptive.skewJoin.enabled=true \
+              --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+              --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
+              --conf spark.driver.extraJavaOptions="--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/sun.nio.cs=ALL-UNNAMED --add-opens java.base/sun.security.action=ALL-UNNAMED --add-opens java.base/sun.util.calendar=ALL-UNNAMED" \
+              --conf spark.executor.extraJavaOptions="--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/sun.nio.cs=ALL-UNNAMED --add-opens java.base/sun.security.action=ALL-UNNAMED --add-opens java.base/sun.util.calendar=ALL-UNNAMED" \
+              app.jar spark
+            echo "✅ Spark-Submit processing job completed"
+        env:
+        - name: app.profile
+          value: "k8s"
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://postgres-service:5432/weather_db"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: weather-pipeline-secrets
+              key: DB_PASSWORD
+        - name: WEATHER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: weather-pipeline-secrets
+              key: WEATHER_API_KEY
+        resources:
+          requests:
+            memory: "1.5Gi"
+            cpu: "750m"
+          limits:
+            memory: "3Gi"
+            cpu: "1500m"

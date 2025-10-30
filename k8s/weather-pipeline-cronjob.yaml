@@ -1,0 +1,86 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weather-pipeline-cronjob
+  namespace: weather-pipeline
+  labels:
+    app: weather-pipeline
+spec:
+  schedule: "0 */6 * * *"  # Run every 6 hours
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: weather-pipeline
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: weather-pipeline
+            image: weather-pipeline:latest
+            imagePullPolicy: Never  # Use local image from minikube
+            args: ["spark"]  # Run in Spark mode
+            env:
+            - name: WEATHER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: weather-pipeline-secrets
+                  key: WEATHER_API_KEY
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: weather-pipeline-secrets
+                  key: DB_PASSWORD
+            - name: SPARK_MASTER
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: SPARK_MASTER
+            - name: SPARK_APP_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: SPARK_APP_NAME
+            - name: JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: weather-pipeline-config
+                  key: JAVA_OPTS
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "1000m"
+            volumeMounts:
+            - name: config-volume
+              mountPath: /app/resources/application.properties
+              subPath: application.properties
+          volumes:
+          - name: config-volume
+            configMap:
+              name: weather-pipeline-config
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3

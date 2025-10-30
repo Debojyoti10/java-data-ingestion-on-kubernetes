@@ -1,0 +1,93 @@
+# OPTIMIZED Multi-stage Docker build - Maximum size reduction
+# Stage 1: Build dependencies and application
+FROM maven:3.8-openjdk-17-slim AS builder
+
+WORKDIR /app
+COPY pom.xml .
+
+# Download and cache dependencies
+RUN mvn dependency:go-offline -B
+
+# Copy source and build
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# Stage 2: Extract and prepare Spark (separate stage for caching)
+FROM alpine:3.18 AS spark-downloader
+
+# Install minimal tools
+RUN apk add --no-cache wget tar
+
+# Download and extract Spark
+RUN wget -q https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoop3.tgz \
+    && tar -xzf spark-3.5.0-bin-hadoop3.tgz \
+    && mv spark-3.5.0-bin-hadoop3 spark \
+    && rm spark-3.5.0-bin-hadoop3.tgz
+
+# Remove unnecessary Spark components to save space
+RUN rm -rf spark/examples \
+    && rm -rf spark/data \
+    && rm -rf spark/python \
+    && rm -rf spark/R \
+    && rm -rf spark/kubernetes \
+    && rm -rf spark/yarn \
+    && find spark/jars -name "*test*" -delete \
+    && find spark/jars -name "*example*" -delete
+
+# Stage 3: Minimal runtime image
+FROM eclipse-temurin:17-jre-alpine AS runtime
+
+# Install only absolutely necessary packages
+RUN apk add --no-cache \
+    bash \
+    curl \
+    procps \
+    && rm -rf /var/cache/apk/*
+
+# Set environment variables
+ENV JAVA_HOME=/opt/java/openjdk
+ENV SPARK_HOME=/opt/spark
+ENV PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
+
+# Create app directory
+WORKDIR /app
+
+# Copy optimized Spark from downloader stage
+COPY --from=spark-downloader /spark /opt/spark
+
+# Copy application JAR from builder stage
+COPY --from=builder /app/target/weather-data-pipeline-1.0.0.jar app.jar
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /opt/spark/logs /opt/spark/work /tmp/spark-events \
+    && chmod -R 755 /opt/spark
+
+# Java 17 compatibility options as environment variable
+ENV JAVA_OPTS="--add-opens=java.base/java.lang=ALL-UNNAMED \
+--add-opens=java.base/java.lang.invoke=ALL-UNNAMED \
+--add-opens=java.base/java.lang.reflect=ALL-UNNAMED \
+--add-opens=java.base/java.io=ALL-UNNAMED \
+--add-opens=java.base/java.net=ALL-UNNAMED \
+--add-opens=java.base/java.nio=ALL-UNNAMED \
+--add-opens=java.base/java.util=ALL-UNNAMED \
+--add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
+--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED \
+--add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+--add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
+--add-opens=java.base/sun.security.action=ALL-UNNAMED \
+--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+
+# Lightweight startup script
+RUN echo '#!/bin/bash\necho "🚀 Starting Optimized Weather Pipeline..."\necho "📊 Memory: $(free -h | grep Mem | awk '\''{print $2}'\'')" \necho "💾 Disk: $(df -h /app | tail -1 | awk '\''{print $4}'\'')" \necho "☕ Java: $(java -version 2>&1 | head -1)"\necho "⚡ Spark: $(/opt/spark/bin/spark-submit --version 2>&1 | grep version | head -1)"\necho ""\nexec java $JAVA_OPTS -jar app.jar "$@"' > start.sh \
+    && chmod +x start.sh
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep java || exit 1
+
+# Expose ports
+EXPOSE 4040 8080
+
+# Run application
+ENTRYPOINT ["/app/start.sh"]
+CMD ["spark"]

@@ -1,0 +1,834 @@
+
+# COMPLETE GUIDE: Weather Data Pipeline with Apache Spark
+
+# Project: Java-based Weather Data Ingestion Pipeline
+# Features: OpenWeatherMap API → Spark Transformations → PostgreSQL Storage
+# Environments: Local Development, Docker Compose, Kubernetes (Minikube)
+
+# OPTION 1: LOCAL DEVELOPMENT (Simple Setup)
+
+
+## PREREQUISITES
+# Java 17+ installed (java -version)
+# Maven 3.8+ installed (mvn -version)
+# Docker Desktop running (docker --version)
+
+## STEP 1: Navigate to Project Directory
+cd E:\java-data-ingestion-pipeline-on-kubernetes\weather-data-pipeline
+
+## STEP 2: Start PostgreSQL Database
+# Check if container already exists
+docker ps -a --filter name=test-postgres
+
+# If container exists and is running - SKIP to STEP 4
+# If container exists but stopped - start it:
+docker start test-postgres
+
+# If container doesn't exist - create new one:
+docker run -d --name test-postgres -e POSTGRES_DB=weather_db -e POSTGRES_USER=weatheruser -e POSTGRES_PASSWORD=weatherpass -p 5432:5432 postgres:13
+
+# If you get "name already in use" error - remove old container:
+# docker rm -f test-postgres
+# Then run the docker run command above
+
+## STEP 3: Verify Database is Running
+docker ps --filter name=test-postgres
+# Should show postgres container on port 5432 with STATUS "Up"
+
+# Test database connection (OPTIONAL but recommended)
+docker exec -it test-postgres psql -U weatheruser -d weather_db -c "SELECT 1 as test;"
+# Should return: test | 1 (means database is working correctly)
+
+## STEP 4: Build the Application
+mvn clean package -DskipTests
+# Wait for BUILD SUCCESS (creates 180MB JAR with all dependencies)
+
+## STEP 5A: Run in Basic Mode (No Spark - Fast Testing)
+java -jar target/weather-data-pipeline-1.0.0.jar
+# Uses application.properties (localhost database)
+# Processes 10 cities: London, Delhi, Tokyo, Paris, Sydney, Mumbai, Berlin, Toronto, Singapore, Dubai
+
+## STEP 5B: Run with Apache Spark Transformations (SPARK-SUBMIT)
+spark-submit --class com.pipeline.weather.WeatherPipelineApplication --master local[*] target/weather-data-pipeline-1.0.0.jar spark
+
+## STEP 6: View Results in Database
+docker exec -it test-postgres psql -U weatheruser -d weather_db -c "SELECT city, temperature, weather_description, recorded_at FROM weather_data ORDER BY recorded_at DESC LIMIT 10;"
+
+## STEP 7: Clean Up
+docker stop test-postgres
+docker rm test-postgres
+
+
+# OPTION 2: KUBERNETES DEPLOYMENT (Production-like)
+
+
+## PREREQUISITES
+# Minikube installed (minikube version)
+# kubectl installed (kubectl version)
+# Docker Desktop running
+
+
+# BUILDING NEW DOCKER IMAGES FROM SCRATCH
+
+
+## PREREQUISITES FOR BUILDING NEW IMAGES
+# Java 17+ installed
+# Maven 3.8+ installed  
+# Docker Desktop running
+# Project JAR file built (mvn clean package -DskipTests)
+
+## STEP 1: Prepare Application JAR
+# Make sure you have built the application first:
+cd E:\java-data-ingestion-pipeline-on-kubernetes\weather-data-pipeline
+mvn clean package -DskipTests
+# This creates target/weather-data-pipeline-1.0.0.jar (180MB with all dependencies)
+
+## STEP 2: Choose Your Docker Build Strategy
+
+### OPTION A: Basic Docker Image (Largest but Simple)
+# Build using Dockerfile (basic version):
+docker build -t weather-pipeline:latest .
+# Creates ~2.7GB image with full JDK
+
+### OPTION B: Optimized Docker Image (Recommended)
+# Build using optimized Dockerfile:
+docker build -f Dockerfile.optimized -t weather-pipeline:optimized .
+# Creates ~1.93GB image with optimizations
+
+### OPTION C: Ultra-Optimized Docker Image (Smallest)
+# Build using ultra-optimized multi-stage Dockerfile:
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:ultra-optimized .
+# Creates ~1.05GB image with Alpine Linux + JRE only
+
+## STEP 3: Build For Different Environments
+
+### For Local Development:
+docker build -t weather-pipeline:local .
+# Tag specifically for local testing
+
+### For Kubernetes Deployment:
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:k8s-prod .
+# Tag specifically for Kubernetes production
+
+### For Testing/Versioning:
+docker build -f Dockerfile.optimized -t weather-pipeline:test-$(Get-Date -Format "MMdd") .
+# Tag with date for testing versions
+
+## STEP 4: Verify New Image
+# List your newly built images:
+docker images | findstr weather-pipeline
+
+# Test the new image locally:
+docker run --rm weather-pipeline:ultra-optimized java -version
+docker run --rm weather-pipeline:ultra-optimized ls -la /app
+
+# Test with local PostgreSQL using spark-submit (if running):
+docker run --rm --network host --entrypoint spark-submit weather-pipeline:ultra-optimized --class com.pipeline.weather.WeatherPipelineApplication --master local[*] app.jar spark
+
+## STEP 5: Load New Image into Minikube
+# After building, load into Minikube for Kubernetes deployment:
+minikube image load weather-pipeline:ultra-optimized
+
+# Verify image is available in Minikube:
+minikube image ls | Select-String weather-pipeline
+
+## STEP 6: Update Kubernetes Deployments
+# After building new image, update your Kubernetes YAML files to use the new tag:
+# Edit k8s/weather-pipeline-cronjob-optimized.yaml
+# Change: image: weather-pipeline:optimized-fixed
+# To: image: weather-pipeline:ultra-optimized
+
+# Then redeploy:
+kubectl delete cronjob weather-pipeline-spark-cronjob -n weather-pipeline
+kubectl apply -f k8s/weather-pipeline-cronjob-optimized.yaml
+
+## STEP 7: Dockerfile Options Available
+
+### Available Dockerfiles in Project:
+# 1. Dockerfile - Basic (2.7GB)
+#    - Full OpenJDK 17 JDK
+#    - Ubuntu base image
+#    - All development tools included
+#    - Command: docker build -t weather-pipeline:basic .
+
+# 2. Dockerfile.optimized - Optimized (1.93GB)  
+#    - JRE instead of full JDK
+#    - Cleaned package cache
+#    - Optimized Docker layers
+#    - Command: docker build -f Dockerfile.optimized -t weather-pipeline:optimized .
+
+# 3. Dockerfile.ultra-optimized - Ultra-Optimized (1.05GB)
+#    - Multi-stage build process
+#    - Alpine Linux base (minimal)
+#    - JRE-only runtime
+#    - Cleaned Spark components
+#    - Minimal system packages
+#    - Command: docker build -f Dockerfile.ultra-optimized -t weather-pipeline:ultra-optimized .
+
+## STEP 8: Build Optimization Tips
+
+### Clean Build (Remove Build Cache):
+docker build --no-cache -f Dockerfile.ultra-optimized -t weather-pipeline:fresh .
+
+### Build with Custom Memory Limits:
+docker build --memory=4g -f Dockerfile.ultra-optimized -t weather-pipeline:memory-optimized .
+
+### Build with Progress Output:
+docker build --progress=plain -f Dockerfile.ultra-optimized -t weather-pipeline:verbose .
+
+### Use BuildKit for Faster Builds:
+$env:DOCKER_BUILDKIT=1
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:buildkit .
+
+## STEP 9: Troubleshooting New Builds
+
+### Build Fails - Out of Space:
+# Clean Docker system:
+docker system prune -a
+docker builder prune
+# Free up space and retry build
+
+### Build Fails - Memory Issues:
+# Increase Docker memory in Docker Desktop settings (minimum 4GB recommended)
+# Or build with memory limits:
+docker build --memory=6g -f Dockerfile.ultra-optimized -t weather-pipeline:fixed .
+
+### JAR File Not Found:
+# Ensure JAR is built first:
+mvn clean package -DskipTests
+dir target\*.jar  # Check JAR exists (Windows)
+
+### Image Too Large:
+# Use ultra-optimized version for smallest size:
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:small .
+
+## STEP 10: Version Management
+# Tag with version numbers:
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:v1.0.0 .
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:v1.0.0 -t weather-pipeline:latest .
+
+# List all versions:
+docker images weather-pipeline
+
+# Remove old versions:
+docker rmi weather-pipeline:old-version
+
+# ================================================================================
+# WORKING WITH EXISTING DOCKER IMAGES
+# ================================================================================
+# If you already have Docker images built, here's how to use them:
+
+## Check Your Existing Images
+docker images | findstr weather-pipeline
+# Shows all weather-pipeline images you've built
+
+## Common Image Tags You Might Have:
+# - weather-pipeline:latest (2.7GB - original)
+# - weather-pipeline:optimized-fixed (1.93GB - optimized)
+# - weather-pipeline:ultra-optimized (1.93GB - ultra-optimized)
+
+## Access/Test Existing Image Locally
+docker run --rm -it --entrypoint /bin/bash weather-pipeline:optimized-fixed
+# Opens shell inside your image to test it (note: override entrypoint)
+
+## Run Existing Image with Database Connection (SECURE APPROACH)
+# STEP 1: Create secure docker config (one-time setup):
+# Create docker-application.properties with docker container credentials (weatheruser/weatherpass)
+
+# STEP 2: Run with mounted config file (NO SENSITIVE DATA IN COMMANDS):
+docker run --rm --network host --entrypoint spark-submit -v "E:\java-data-ingestion-pipeline-on-kubernetes\weather-data-pipeline\docker-application.properties:/app/application.properties:ro" weather-pipeline:optimized-fixed --class com.pipeline.weather.WeatherPipelineApplication --master local[*] app.jar spark
+
+# ✅ SECURE: No passwords in command history
+# ✅ READ-ONLY: Config file mounted as read-only (:ro)
+# ✅ ISOLATED: Uses docker-specific credentials, not your main application.properties
+
+## STEP 1: Start Minikube
+minikube start --memory=4096 --cpus=2
+# Starts Kubernetes cluster on E drive (optimized storage)
+
+## STEP 2: Navigate to Project Directory
+cd E:\java-data-ingestion-pipeline-on-kubernetes\weather-data-pipeline
+
+## STEP 3: Configure Docker for Minikube
+minikube docker-env --shell powershell | Invoke-Expression
+# Points Docker commands to Minikube's Docker daemon
+
+## STEP 4: Build Ultra-Optimized Docker Image (OR Use Existing)
+# Check if image already exists
+docker images | grep weather-pipeline
+
+# OPTION A: If you already have the image built locally - load it into Minikube
+minikube image load weather-pipeline:optimized-fixed
+# OR
+minikube image load weather-pipeline:latest
+# OR
+minikube image load weather-pipeline:ultra-optimized
+
+# OPTION B: If you need to build new optimized image in Minikube
+docker build -f Dockerfile.ultra-optimized -t weather-pipeline:k8s-optimized .
+# Creates 1.05GB image (much smaller than 2.7GB previous versions)
+
+## STEP 5: Verify Image is Available in Minikube
+# Check images in Minikube's Docker registry
+minikube image ls | Select-String weather-pipeline
+# Should show your weather-pipeline image
+
+## STEP 6: Deploy PostgreSQL to Kubernetes
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/postgres-storage.yaml
+kubectl apply -f k8s/postgres-deployment.yaml
+
+## STEP 7: Deploy Application Configuration
+kubectl apply -f k8s/secrets.yaml
+kubectl apply -f k8s/configmap.yaml
+
+## STEP 8A: Deploy Weather Application Job (One-time execution)
+kubectl apply -f k8s/optimized-spark-job.yaml
+# This creates the job but doesn't run it yet
+
+## STEP 8B: Deploy Weather Application CronJob (Scheduled execution)
+kubectl apply -f k8s/weather-pipeline-cronjob.yaml
+# This will run Spark transformations automatically on schedule
+
+## STEP 9: Monitor Deployment
+kubectl get all -n weather-pipeline
+# Check if pods are running
+
+## STEP 10: View Application Logs (Real-time Spark Processing)
+kubectl logs -f job/weather-pipeline-optimized-spark -n weather-pipeline
+
+
+# RUNNING THE JAVA SPARK PROGRAM COMMANDS
+
+
+## METHOD 1: Direct Job Execution (Recommended)
+# Create and run a new Spark job immediately:
+kubectl create job --from=cronjob/weather-pipeline-spark-cronjob spark-run-$(Get-Date -Format "MMddHHmm") -n weather-pipeline
+
+# Then monitor the execution:
+kubectl get jobs -n weather-pipeline --watch
+
+## METHOD 2: Interactive Pod Execution (For Testing/Debugging)
+# Deploy debug pod:
+kubectl apply -f k8s/debug-pod.yaml
+
+# Execute Spark program interactively using spark-submit:
+kubectl exec -it weather-pipeline-debug -n weather-pipeline -- spark-submit --class com.pipeline.weather.WeatherPipelineApplication --master local[*] app.jar spark
+
+## KUBECTL SPARK-SUBMIT WORKFLOW SUMMARY:
+# ✅ kubectl apply -f k8s/optimized-spark-job.yaml  (Apply job YAML with spark-submit command)
+# ✅ kubectl get jobs -n weather-pipeline            (Check job status - look for 1/1 COMPLETIONS)  
+# ✅ kubectl logs job/weather-pipeline-optimized-spark -n weather-pipeline  (View execution logs)
+
+## METHOD 3: One-liner Job Creation and Monitoring
+# Create job and immediately follow logs:
+kubectl create job --from=cronjob/weather-pipeline-spark-cronjob spark-manual-$(Get-Date -Format "MMddHHmm") -n weather-pipeline; kubectl wait --for=condition=ready pod -l job-name=spark-manual-$(Get-Date -Format "MMddHHmm") -n weather-pipeline --timeout=60s; kubectl logs -f job/spark-manual-$(Get-Date -Format "MMddHHmm") -n weather-pipeline
+
+## METHOD 4: Using Existing Job Template
+# If optimized-spark-job.yaml exists, trigger it:
+kubectl delete job weather-pipeline-optimized-spark -n weather-pipeline 2>/dev/null; kubectl apply -f k8s/optimized-spark-job.yaml
+
+# Monitor the job execution:
+kubectl logs -f job/weather-pipeline-optimized-spark -n weather-pipeline
+
+## STEP 11A: Access Database via Command Line
+kubectl exec -it deployment/postgres -n weather-pipeline -- psql -U postgres -d weather_db -c "SELECT city, temperature, weather_description FROM weather_data LIMIT 10;"
+
+## STEP 11B: Access Database via pgAdmin4 GUI
+# Set up port forwarding (run this in a separate terminal and keep it running)
+kubectl port-forward service/postgres-service 5434:5432 -n weather-pipeline
+
+# In pgAdmin4, create new server connection:
+# General Tab:
+#   - Name: Minikube Weather DB
+# Connection Tab:
+#   - Host: localhost
+#   - Port: 5434
+#   - Database: weather_db
+#   - Username: postgres
+#   - Password: postgres
+# 
+# Then you can browse: Servers > Minikube Weather DB > Databases > weather_db > Schemas > public > Tables > weather_data
+# Right-click on weather_data table > View/Edit Data > All Rows
+
+
+# POSTGRESQL DATABASE CONNECTION GUIDE
+
+
+## METHOD 1: Command Line Access (Quick Queries)
+# Basic connection (from host machine):
+kubectl exec -it deployment/postgres -n weather-pipeline -- psql -U postgres -d weather_db
+
+kubectl port-forward service/postgres-service 5434:5432 -n weather-pipeline
+
+psql -h localhost -p 5434 -d weather_db -U postgres
+
+
+
+
+
+# CRONJOB ORCHESTRATION (AUTOMATED SPARK TRANSFORMATIONS)
+
+
+## CRONJOB DEPLOYMENT OPTIONS:
+
+## OPTION A: Basic CronJob (Every 6 hours)
+kubectl apply -f k8s/weather-pipeline-cronjob.yaml
+
+## OPTION B: Optimized CronJob (Every 30 minutes for testing) - CURRENTLY ACTIVE
+kubectl apply -f k8s/weather-pipeline-cronjob-optimized.yaml
+
+## CRONJOB MANAGEMENT COMMANDS:
+
+## View CronJob Status and Last Schedule
+kubectl get cronjobs -n weather-pipeline
+kubectl describe cronjob weather-pipeline-spark-cronjob -n weather-pipeline
+
+## Check Current Time vs Next Run
+Get-Date; kubectl get cronjobs -n weather-pipeline
+# Compare current time with LAST SCHEDULE to predict next run
+
+## View CronJob Execution History (Most Recent First)
+kubectl get jobs -n weather-pipeline --sort-by=.metadata.creationTimestamp
+kubectl get pods -n weather-pipeline --show-labels --sort-by=.metadata.creationTimestamp
+
+## Monitor CronJob Execution in Real-Time
+kubectl get jobs -n weather-pipeline --watch
+# Keep this running to see new jobs appear automatically
+
+## View Logs from Latest CronJob Execution
+# Find latest job name first:
+kubectl get jobs -n weather-pipeline --sort-by=.metadata.creationTimestamp --no-headers | tail -1
+# Then view its logs:
+kubectl logs job/[latest-job-name] -n weather-pipeline
+
+## View Logs from Specific Job
+kubectl logs job/weather-pipeline-spark-cronjob-[timestamp] -n weather-pipeline
+
+## Follow Logs in Real-Time (for running job)
+kubectl logs -f job/[job-name] -n weather-pipeline
+
+## Manually Trigger CronJob (Test without waiting for schedule)
+# PowerShell version:
+kubectl create job --from=cronjob/weather-pipeline-spark-cronjob manual-test-$(Get-Date -Format "MMddHHmm") -n weather-pipeline
+
+# Example: kubectl create job --from=cronjob/weather-pipeline-spark-cronjob manual-test-10290845 -n weather-pipeline
+
+## Suspend/Resume CronJob (PowerShell-Compatible)
+# SUSPEND (Stop Scheduled Execution):
+echo '{"spec":{"suspend":true}}' > patch.json; kubectl patch cronjob weather-pipeline-spark-cronjob --patch-file patch.json -n weather-pipeline; Remove-Item patch.json
+
+# RESUME (Start Scheduled Execution):
+echo '{"spec":{"suspend":false}}' > patch.json; kubectl patch cronjob weather-pipeline-spark-cronjob --patch-file patch.json -n weather-pipeline; Remove-Item patch.json
+
+## Change CronJob Schedule (Examples)
+# Every 30 minutes (current): kubectl patch cronjob weather-pipeline-spark-cronjob -p '{"spec":{"schedule":"*/30 * * * *"}}' -n weather-pipeline
+# Every 15 minutes (testing): kubectl patch cronjob weather-pipeline-spark-cronjob -p '{"spec":{"schedule":"*/15 * * * *"}}' -n weather-pipeline
+# Every hour: kubectl patch cronjob weather-pipeline-spark-cronjob -p '{"spec":{"schedule":"0 */1 * * *"}}' -n weather-pipeline
+# Every 2 hours: kubectl patch cronjob weather-pipeline-spark-cronjob -p '{"spec":{"schedule":"0 */2 * * *"}}' -n weather-pipeline
+# Daily at 9am: kubectl patch cronjob weather-pipeline-spark-cronjob -p '{"spec":{"schedule":"0 9 * * *"}}' -n weather-pipeline
+# Every 6 hours: kubectl patch cronjob weather-pipeline-spark-cronjob -p '{"spec":{"schedule":"0 */6 * * *"}}' -n weather-pipeline
+# CURRENT SCHEDULE: Every 30 minutes (*/30 * * * *)
+
+## View Database Growth Over Time (Check CronJob Results)
+kubectl exec -it deployment/postgres -n weather-pipeline -- psql -U postgres -d weather_db -c "SELECT COUNT(*) as total_records, COUNT(DISTINCT city) as cities, MIN(recorded_at) as first_record, MAX(recorded_at) as latest_record FROM weather_data;"
+
+## SPARK-SUBMIT EXECUTION (UPDATED APPROACH):
+# Application NOW USES spark-submit instead of java commands for better Spark-native configuration
+# ALL Kubernetes deployments (CronJob and Job YAMLs) have been updated to use spark-submit
+
+# SPARK-SUBMIT COMMAND STRUCTURE:
+# /opt/spark/bin/spark-submit \
+#   --class com.pipeline.weather.WeatherPipelineApplication \
+#   --master local[*] \
+#   --driver-memory 2g \
+#   --executor-memory 1g \
+#   --executor-cores 2 \
+#   --conf spark.app.name="WeatherDataPipeline" \
+#   --conf spark.sql.adaptive.enabled=true \
+#   --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+#   --conf spark.sql.adaptive.skewJoin.enabled=true \
+#   --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+#   --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
+#   --conf spark.driver.extraJavaOptions="[Java 17 compatibility flags]" \
+#   --conf spark.executor.extraJavaOptions="[Java 17 compatibility flags]" \
+#   app.jar spark
+
+# BENEFITS OF SPARK-SUBMIT vs JAVA COMMAND:
+# ✅ Better Spark configuration management (native Spark configs)
+# ✅ Enhanced monitoring and UI access (Spark Web UI)
+# ✅ Improved resource allocation (--driver-memory, --executor-memory)
+# ✅ Industry-standard Spark deployment practice
+# ✅ Advanced Spark optimization settings (adaptive query execution)
+# ✅ Better integration with Spark ecosystem
+# ✅ Cleaner separation of JVM args and Spark configs
+# ✅ Enhanced logging and debugging capabilities
+# ✅ Better performance monitoring and metrics
+# ✅ Spark-native resource management
+
+# ENVIRONMENTS USING SPARK-SUBMIT:
+# 🔄 Local Development: spark-submit command with local[*] master
+# 🔄 Docker Containers: spark-submit inside container execution
+# 🔄 Kubernetes CronJob: Automated scheduling with spark-submit
+# 🔄 Kubernetes Jobs: One-time execution with spark-submit
+# 🔄 Debug Pods: Interactive spark-submit execution
+
+## SPARK-SUBMIT COMMAND:
+spark-submit --class com.pipeline.weather.WeatherPipelineApplication --master local[*] target/weather-data-pipeline-1.0.0.jar spark
+
+## COMMAND COMPARISON:
+
+# OLD WAY (Java Command - 200+ characters with complex JVM flags)
+# NEW WAY (Spark-Submit - Simple):
+spark-submit --class com.pipeline.weather.WeatherPipelineApplication --master local[*] target/weather-data-pipeline-1.0.0.jar spark
+
+## CRONJOB SCHEDULE OPTIONS:
+# "*/30 * * * *"     # Every 30 minutes (current setting)
+# "*/15 * * * *"     # Every 15 minutes (for intensive testing)
+# "0 */1 * * *"      # Every hour
+# "0 */2 * * *"      # Every 2 hours
+# "0 */6 * * *"      # Every 6 hours (recommended for weather data)
+# "0 8,14,20 * * *"  # Three times daily: 8am, 2pm, 8pm
+# "0 9 * * *"        # Once daily at 9am
+# "0 0 * * 0"        # Weekly on Sunday at midnight
+# "0 0 1 * *"        # Monthly on the 1st at midnight
+
+## MONITORING AUTOMATED RUNS:
+# Check if automation is working: kubectl get cronjobs -n weather-pipeline (look for LAST SCHEDULE time)
+# Check recent job executions: kubectl get jobs -n weather-pipeline --sort-by=.metadata.creationTimestamp
+# View job details: kubectl describe job [job-name] -n weather-pipeline
+# Check pod logs: kubectl logs [pod-name] -n weather-pipeline
+# Database record count: kubectl exec -it deployment/postgres -n weather-pipeline -- psql -U postgres -d weather_db -c "SELECT COUNT(*) FROM weather_data;"
+# Check latest records: kubectl exec -it deployment/postgres -n weather-pipeline -- psql -U postgres -d weather_db -c "SELECT city, recorded_at FROM weather_data ORDER BY recorded_at DESC LIMIT 10;"
+
+## TROUBLESHOOTING CRONJOBS:
+# Job not starting: Check cronjob status and events
+# Job failing: Check pod logs and resource limits
+# Database connection issues: Verify postgres service is running
+# Image not found: Ensure image is loaded in Minikube
+# Authentication issues: Check secrets and configmap values
+
+# ================================================================================
+# OPTION 3: DOCKER COMPOSE (Container Orchestration)
+# ================================================================================
+
+## STEP 1: Start with Docker Compose
+docker-compose up -d
+# Starts both PostgreSQL and Weather Pipeline containers
+
+## STEP 2: View Logs
+docker-compose logs -f weather-pipeline
+
+## STEP 3: Access Database
+docker exec -it weather-data-pipeline-postgres-1 psql -U postgres -d weather_db -c "SELECT city, temperature FROM weather_data LIMIT 5;"
+
+## STEP 4: Clean Up
+docker-compose down -v
+
+
+
+
+# TROUBLESHOOTING
+
+# Issue: "Unable to access jarfile"
+# Solution: Run "mvn clean package -DskipTests" first
+
+# Issue: "Connection refused" to database
+# Solution: Ensure PostgreSQL container is running (docker ps)
+
+# Issue: "Container name already in use"
+# Solution: Either use existing container (docker start test-postgres) or remove it (docker rm -f test-postgres)
+
+# Issue: Database connection test fails
+# Solution: Wait 10-15 seconds after starting container, then retry connection test
+
+# Issue: Spark module errors in Java 17+
+# Solution: Use the provided --add-opens JVM arguments
+
+# Issue: Out of memory
+# Solution: Increase Docker memory limit or use -Xmx2g flag
+
+# Issue: Image not found in Minikube
+# Solution: Load your existing image: minikube image load weather-pipeline:your-tag
+
+# Issue: "ErrImageNeverPull" in Kubernetes
+# Solution: Ensure imagePullPolicy: Never in YAML and image exists in Minikube
+
+# Issue: Multiple versions of same image
+# Solution: Use specific tags and check with "docker images" and "minikube image ls"
+
+# Issue: Minikube can't find locally built image
+# Solution: Either load image (minikube image load) or rebuild after "minikube docker-env"
+
+# Issue: PowerShell multi-line commands with backslashes (\) fail
+# Solution: Use backticks (`) for line continuation in PowerShell instead of backslashes
+# Correct: spark-submit ` --class MyClass ` --master local[*] myapp.jar
+# Wrong: spark-submit \ --class MyClass \ --master local[*] myapp.jar
+
+# Issue: "Missing expression after unary operator '--'" in PowerShell
+# Solution: Copy the entire command as single line, or use backtick (`) line continuation
+
+# Issue: Command too long for PowerShell terminal
+# Solution: Use the single-line versions provided in documentation, PowerShell handles long commands
+
+# Issue: Docker daemon not running (500 Internal Server Error)
+# Solution: Restart Docker Desktop application, or restart Docker service
+
+
+
+
+
+
+
+# QUICK COMMANDS FOR EXISTING SETUPS
+
+## If You Already Have Everything Built - Quick Start:
+# 1. Start Minikube: minikube start
+# 2. Load existing image: minikube image load weather-pipeline:optimized-fixed  
+# 3. Deploy to K8s: kubectl apply -f k8s/
+# 4. Check status: kubectl get all -n weather-pipeline
+# 5. View logs: kubectl logs -f job/weather-pipeline-optimized-spark -n weather-pipeline
+
+## RESTART AFTER BREAK (3+ hours later):
+# 1. Start Docker Desktop (GUI application)
+# 2. Start Minikube: minikube start --memory=4096 --cpus=2
+# 3. Check your data is still there: kubectl exec -it deployment/postgres -n weather-pipeline -- psql -U postgres -d weather_db -c "SELECT COUNT(*) FROM weather_data;"
+# 4. (Optional) View data in pgAdmin4: kubectl port-forward service/postgres-service 5434:5432 -n weather-pipeline
+# 5. (Optional) Run new Spark job using spark-submit: kubectl exec -it weather-pipeline-debug -n weather-pipeline -- spark-submit --class com.pipeline.weather.WeatherPipelineApplication --master local[*] app.jar spark
+
+## WHAT'S PRESERVED AFTER SHUTDOWN:
+# All Docker images (weather-pipeline:optimized-fixed, etc.)
+# Minikube cluster configuration and stored data
+# All weather data with Spark transformations in PostgreSQL
+# All Kubernetes YAML configurations
+# Built JAR file (180MB) with all dependencies
+
+## WHAT NEEDS RESTART:
+#  Docker Desktop application
+#  Minikube cluster (minikube start)
+#  Port forwarding for pgAdmin4 (if needed)
+
+## Access Existing Local Docker Images:
+# List images: docker images | findstr weather
+# Run locally using spark-submit: docker run --rm --network host --entrypoint spark-submit weather-pipeline:your-tag --class com.pipeline.weather.WeatherPipelineApplication --master local[*] app.jar spark
+# Test image: docker run --rm -it weather-pipeline:your-tag /bin/bash
+
+## Minikube Image Management:
+# List ALL images in Minikube: minikube image ls
+# Count total images: minikube image ls | Measure-Object -Line
+# List only weather-pipeline images: minikube image ls | Select-String weather-pipeline
+# List images with sizes: minikube image ls --format table
+# Load from local: minikube image load weather-pipeline:tag
+# Remove from Minikube: minikube image rm weather-pipeline:tag
+# Build directly in Minikube: minikube docker-env | Invoke-Expression; docker build -t your-tag .
+
+## Check Minikube Storage Usage:
+# See disk usage inside Minikube: minikube ssh "df -h"
+# See Docker storage in Minikube: minikube ssh "docker system df"
+
+
+# DOCKER STATUS MONITORING COMMANDS
+
+
+## Check Docker Installation and Version:
+docker --version
+# Shows: Docker version 28.5.1, build e180ab8
+
+## Check Docker Daemon Status:
+docker info
+# If working: Shows detailed system information
+# If broken: Shows "500 Internal Server Error" or connection errors
+
+## Quick Docker Health Check:
+docker ps
+# If working: Shows running containers
+# If broken: Shows API errors or "Cannot connect to Docker daemon"
+
+## Check All Containers (Running + Stopped):
+docker ps -a
+
+## Check Docker System Status:
+docker system df
+# Shows disk usage by Docker (images, containers, volumes, cache)
+
+## Check Docker Images:
+docker images
+# Shows all downloaded/built Docker images
+
+## Check Docker Networks:
+docker network ls
+
+## Check Docker Volumes:
+docker volume ls
+
+## Check Docker Services (Docker Compose):
+docker-compose ps
+# Shows status of services defined in docker-compose.yml
+
+## Monitor Docker Resource Usage:
+docker system events
+# Real-time Docker events (Ctrl+C to stop)
+
+## DOCKER TROUBLESHOOTING COMMANDS:
+
+## Docker Desktop Status (Windows):
+# Method 1: Check if Docker Desktop is running in Task Manager
+Get-Process | Where-Object {$_.ProcessName -like "*Docker*"}
+
+# Method 2: Check Docker Desktop service status
+Get-Service | Where-Object {$_.Name -like "*docker*"}
+
+## Fix Common Docker Issues:
+# 1. Restart Docker Desktop (GUI application)
+# 2. Or restart Docker service:
+Restart-Service docker
+# 3. Or restart Docker Desktop service:
+Restart-Service com.docker.service
+
+## Check Docker Desktop WSL Integration:
+wsl --list --verbose
+# Should show Docker-related WSL distributions
+
+## Docker Desktop System Requirements Check:
+# - Windows 10/11 with WSL2 enabled
+# - Hyper-V or WSL2 backend enabled
+# - Sufficient memory (minimum 4GB recommended)
+# - Sufficient disk space
+
+## DOCKER STATUS INDICATORS:
+
+# ✅ HEALTHY DOCKER:
+# - docker --version: Shows version
+# - docker info: Shows system info without errors
+# - docker ps: Shows container list (even if empty)
+
+# ❌ BROKEN DOCKER:
+# - docker info: "500 Internal Server Error"
+# - docker ps: "Cannot connect to Docker daemon"
+# - Docker Desktop not running in system tray
+
+## CURRENT ISSUE DIAGNOSIS:
+# Based on your output:
+# - Docker CLIENT is installed (version 28.5.1)
+# - Docker DAEMON is not running properly (500 Internal Server Error)
+# - Solution: Restart Docker Desktop application
+
+## DOCKER 500 INTERNAL SERVER ERROR - COMPLETE FIX:
+
+### IMMEDIATE SOLUTIONS (Try in Order):
+
+## SOLUTION 1: Complete Docker Desktop Restart
+# Step 1: Close Docker Desktop completely
+# - Right-click Docker icon in system tray → "Quit Docker Desktop"
+# - Or kill all Docker processes:
+Get-Process | Where-Object {$_.ProcessName -like "*Docker*"} | Stop-Process -Force
+
+# Step 2: Wait 10 seconds for cleanup
+Start-Sleep -Seconds 10
+
+# Step 3: Restart Docker Desktop
+# - Open Docker Desktop from Start Menu
+# - Wait 2-3 minutes for full initialization
+
+## SOLUTION 2: Switch Docker Context
+# Check current context:
+docker context ls
+
+# Switch to default context if using desktop-linux:
+docker context use default
+
+# Or switch back to desktop-linux:
+docker context use desktop-linux
+
+## SOLUTION 3: Restart Docker Services
+# Restart Docker service:
+Restart-Service com.docker.service
+
+# Check service status:
+Get-Service com.docker.service
+
+## SOLUTION 4: Reset Docker Desktop Settings
+# In Docker Desktop GUI:
+# 1. Open Docker Desktop
+# 2. Go to Settings (gear icon)
+# 3. Go to "Troubleshoot" tab
+# 4. Click "Restart Docker Desktop"
+# 5. Or click "Reset to factory defaults" (WARNING: removes all data)
+
+## SOLUTION 5: Fix WSL2 Integration Issues (COMMON DOCKER DESKTOP ERROR)
+
+# ERROR: "There was a problem with WSL" with E_ACCESSDENIED
+# This is a WSL integration issue with Docker Desktop
+
+### Step 1: Check WSL Status
+wsl --list --verbose
+# Should show Docker-related distributions
+
+### Step 2: Restart WSL Completely
+wsl --shutdown
+Start-Sleep -Seconds 10
+
+### Step 3: Restart WSL Service
+Restart-Service LxssManager
+
+### Step 4: Check WSL Version
+wsl --version
+# Ensure WSL2 is installed
+
+### Step 5: Update WSL (if needed)
+wsl --update
+
+### Step 6: Enable Required Windows Features
+# Run as Administrator:
+Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
+Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
+
+### Step 7: Reset Docker Desktop WSL Integration
+# In Docker Desktop Settings:
+# 1. Go to Settings → Resources → WSL Integration
+# 2. Toggle OFF "Enable integration with my default WSL distro"
+# 3. Click "Apply & Restart"
+# 4. After restart, toggle it back ON
+# 5. Click "Apply & Restart" again
+
+### Step 8: Fix WSL Moved to Different Drive (E:\Docker\DockerDesktopWSL)
+# When WSL is moved to E drive, it needs to be re-registered
+
+# Check if WSL distributions exist on E drive:
+Get-ChildItem E:\Docker\DockerDesktopWSL\ -Directory
+
+# Re-register WSL distributions:
+# Method 1: Import existing WSL distribution
+wsl --import docker-desktop E:\Docker\DockerDesktopWSL\main E:\Docker\DockerDesktopWSL\main\ext4.vhdx
+wsl --import docker-desktop-data E:\Docker\DockerDesktopWSL\disk E:\Docker\DockerDesktopWSL\disk\ext4.vhdx
+
+# Method 2: If ext4.vhdx files exist, register them
+# Check for ext4.vhdx files:
+Get-ChildItem E:\Docker\DockerDesktopWSL\ -Recurse -Filter "*.vhdx"
+
+# Method 3: Reset Docker Desktop to recreate WSL integration
+# In Docker Desktop: Settings → Troubleshoot → "Reset to factory defaults"
+
+### Step 9: Alternative - Switch to Windows Containers
+# If WSL issues persist, temporarily switch to Windows containers:
+# Right-click Docker tray icon → "Switch to Windows containers"
+
+## SOLUTION 6: Manual Engine Restart
+# Kill Docker processes:
+taskkill /f /im "Docker Desktop.exe"
+taskkill /f /im "com.docker.service.exe"
+
+# Start services manually:
+Start-Service com.docker.service
+
+## VERIFICATION COMMANDS:
+# After trying solutions, verify Docker is working:
+docker version      # Should show both client and server info
+docker info         # Should show system info without errors
+docker ps           # Should show container list (even if empty)
+
+## CURRENT ISSUE STATUS:
+# Error: "500 Internal Server Error for API route"
+# This means Docker Desktop GUI is running but engine isn't responding
+# Most likely cause: Docker engine is still starting up or crashed
+# Best solution: Complete restart of Docker Desktop application

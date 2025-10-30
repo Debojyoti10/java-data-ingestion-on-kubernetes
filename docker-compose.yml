@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: weather-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: weather_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/main/resources/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - weather-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: weather-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@weather.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    networks:
+      - weather-network
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  # Weather Data Pipeline Application
+  weather-pipeline:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: weather-pipeline-app
+    environment:
+      # Database configuration
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: weather_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      
+      # Weather API configuration (set your API key here)
+      WEATHER_API_KEY: ${WEATHER_API_KEY:-your_openweather_api_key_here}
+      WEATHER_API_BASE_URL: https://api.openweathermap.org/data/2.5
+      WEATHER_API_UNITS: metric
+      
+      # Application configuration
+      APP_FETCH_INTERVAL_SECONDS: 300
+      APP_MAX_RETRIES: 3
+      LOGGING_LEVEL: INFO
+      
+      # Spark configuration
+      SPARK_MASTER: local[*]
+      SPARK_DRIVER_MEMORY: 1g
+      SPARK_EXECUTOR_MEMORY: 1g
+      SPARK_SQL_WAREHOUSE_DIR: /tmp/spark-warehouse
+      
+      # Java options for compatibility
+      JAVA_OPTS: >
+        --add-opens=java.base/java.lang=ALL-UNNAMED
+        --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+        --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+        --add-opens=java.base/java.io=ALL-UNNAMED
+        --add-opens=java.base/java.net=ALL-UNNAMED
+        --add-opens=java.base/java.nio=ALL-UNNAMED
+        --add-opens=java.base/java.util=ALL-UNNAMED
+        --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+        --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+        --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+        --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+        --add-opens=java.base/sun.security.action=ALL-UNNAMED
+        --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+        --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED
+    
+    ports:
+      - "4040:4040"  # Spark UI
+      - "8081:8081"  # Application metrics
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+    
+    networks:
+      - weather-network
+    
+    volumes:
+      - spark_logs:/opt/spark/logs
+      - spark_work:/opt/spark/work
+      - ./logs:/app/logs
+    
+    # Run in Spark mode by default
+    command: ["spark"]
+    
+    # Restart policy
+    restart: unless-stopped
+
+networks:
+  weather-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  spark_logs:
+    driver: local
+  spark_work:
+    driver: local

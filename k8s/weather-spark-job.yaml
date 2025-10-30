@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: weather-spark-job
+  namespace: weather-pipeline
+  labels:
+    app: weather-pipeline
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: weather-pipeline
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: weather-pipeline
+        image: weather-pipeline:latest
+        imagePullPolicy: Never
+        args: ["spark"]  # Spark mode
+        env:
+        - name: WEATHER_API_KEY
+          value: "e99f845ef6c72dc0a3de1c018e8c3b04"
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://postgres-service:5432/weather_db"
+        - name: DB_HOST
+          value: "postgres-service"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "weather_db"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          value: "Debo*002"
+        - name: JAVA_OPTS
+          value: "--add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.nio.cs=ALL-UNNAMED --add-opens=java.base/sun.security.action=ALL-UNNAMED --add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"
+            cpu: "1500m"
