@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: weather-pipeline-working-fix-test
+  namespace: weather-pipeline
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: weather-pipeline
+        image: weather-pipeline:cronjob-fix-final
+        imagePullPolicy: Never
+        env:
+        - name: MODE
+          value: "spark"
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: weather-pipeline-secrets
+              key: WEATHER_API_KEY
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://postgres-service:5432/weather_db"
+        - name: DATABASE_USERNAME
+          value: "weatheruser"
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: weather-pipeline-secrets
+              key: DB_PASSWORD
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
